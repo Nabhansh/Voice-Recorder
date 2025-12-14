@@ -1,11 +1,12 @@
 """
-Advanced Voice Recorder – Modern UI Edition (Repaired)
+Advanced Voice Recorder – Modern UI Edition (Final)
 
 Features:
 - 🎚 Live audio level bar
-- 🎤 Microphone selector dropdown
-- Stable Windows mic handling
-- Text-only splash (safe for double-click)
+- 🎙 Auto default microphone
+- Stable Windows recording
+- WAV + MP3 (lameenc)
+- Text-only splash (safe)
 """
 
 import tkinter as tk
@@ -15,7 +16,7 @@ import queue
 import threading
 from collections import deque
 from datetime import timedelta
-        
+
 import matplotlib
 matplotlib.use("Agg")
 from matplotlib.figure import Figure
@@ -25,6 +26,7 @@ import numpy as np
 import sounddevice as sd
 import soundfile as sf
 import lameenc
+
 
 # ---------------- SPLASH ----------------
 def show_splash():
@@ -57,15 +59,6 @@ WAVE_SECONDS = 3
 MAX_SAMPLES = SAMPLE_RATE * WAVE_SECONDS
 
 
-# ---------------- MIC LIST ----------------
-def list_mics():
-    return [
-        (i, d["name"])
-        for i, d in enumerate(sd.query_devices())
-        if d["max_input_channels"] > 0
-    ]
-
-
 # ---------------- AUDIO ----------------
 class Recorder:
     def __init__(self):
@@ -84,14 +77,13 @@ class Recorder:
                 return
         self.q.put(indata.copy())
 
-    def start(self, device_index):
+    def start(self):
         with self.lock:
             self.frames.clear()
             self.recording = True
             self.paused = False
 
         self.stream = sd.InputStream(
-            device=device_index,
             samplerate=SAMPLE_RATE,
             channels=CHANNELS,
             blocksize=CHUNK_SIZE,
@@ -164,12 +156,6 @@ class VoiceRecorderApp(tk.Tk):
         self.start_time = None
         self.level = 0.0
 
-        self.mics = list_mics()
-        if not self.mics:
-            messagebox.showerror("Error", "No microphone detected.")
-            self.destroy()
-            return
-
         self._build_layout()
         self._build_waveform()
 
@@ -184,22 +170,7 @@ class VoiceRecorderApp(tk.Tk):
             self.controls, text="🎙 Recorder",
             fg="white", bg="#181818",
             font=("Segoe UI", 14, "bold")
-        ).pack(pady=(12, 10))
-
-        tk.Label(
-            self.controls, text="Microphone",
-            fg="#bdbdbd", bg="#181818",
-            font=("Segoe UI", 9)
-        ).pack()
-
-        self.mic_var = tk.StringVar(value=self.mics[0][1])
-        ttk.Combobox(
-            self.controls,
-            values=[m[1] for m in self.mics],
-            textvariable=self.mic_var,
-            state="readonly",
-            width=22
-        ).pack(pady=(0, 12))
+        ).pack(pady=(12, 20))
 
         self.btn_start = self._btn("▶ Start", self.start, "#1db954")
         self.btn_pause = self._btn("⏸ Pause", self.pause, "#fbbc05", disabled=True)
@@ -208,6 +179,8 @@ class VoiceRecorderApp(tk.Tk):
 
         for b in (self.btn_start, self.btn_pause, self.btn_resume, self.btn_stop):
             b.pack(pady=6)
+
+        tk.Frame(self.controls, height=10, bg="#181818").pack()
 
         self.btn_wav = self._btn("💾 Save WAV", self.save_wav, "#673ab7")
         self.btn_mp3 = self._btn("🎵 Save MP3", self.save_mp3, "#ff6d00")
@@ -264,8 +237,12 @@ class VoiceRecorderApp(tk.Tk):
 
     # ---------- CONTROLS ----------
     def start(self):
-        mic_index = next(i for i, n in self.mics if n == self.mic_var.get())
-        self.rec.start(mic_index)
+        try:
+            self.rec.start()
+        except Exception as e:
+            messagebox.showerror("Mic Error", str(e))
+            return
+
         self.start_time = time.time()
         self.status.config(text="● Recording", fg="#1db954")
         self.btn_start.config(state="disabled")
@@ -312,6 +289,7 @@ class VoiceRecorderApp(tk.Tk):
         if self.rec.frames:
             data = self.rec.frames[-1].flatten()
             self.wave.extend(data.tolist())
+
             rms = np.sqrt(np.mean(data ** 2))
             self.level = self.level * 0.8 + rms * 0.2
             self.level_bar["value"] = self.level
